@@ -9,7 +9,7 @@ Compatibility shims for NumPy 1.20+ where aliases like np.int/np.float were remo
 Some older dependencies (e.g., fbprophet) still reference these names.
 This ensures runtime compatibility without requiring users to pin old NumPy.
 """
-# 使用 warnings 过滤器避免检查 hasattr 时触发 FutureWarning
+# Use a warnings filter to avoid FutureWarning when checking hasattr
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", FutureWarning)
     if not hasattr(np, "int"):
@@ -19,11 +19,11 @@ with warnings.catch_warnings():
     if not hasattr(np, "bool"):
         np.bool = bool  # type: ignore[attr-defined]
 try:
-    # 优先使用新包名
+    # Prefer the modern package name first
     from prophet import Prophet  # type: ignore
     _PROPHET_LOGGER_NAME = "prophet"
 except Exception:
-    # 回退到旧包名
+    # Fall back to the legacy package name
     from fbprophet import Prophet  # type: ignore
     _PROPHET_LOGGER_NAME = "fbprophet"
 try:
@@ -38,7 +38,7 @@ import csv
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import os
 
-# tqdm 进度条（若不可用则使用空实现）
+# tqdm progress bar fallback (use a no-op implementation if unavailable)
 try:
     from tqdm import tqdm  # type: ignore
 except Exception:
@@ -47,10 +47,11 @@ except Exception:
 
 
 class PSO(object):
-    """粒子群优化，用于搜索 Prophet 的三个关键参数：
+    """Particle swarm optimization for searching three key Prophet parameters:
     [seasonality_prior_scale, changepoint_prior_scale, n_changepoints]
 
-    适应度函数通过交叉验证误差（在给定索引处的 |y - yhat| 平均值）。
+    The fitness function is the mean absolute validation error |y - yhat|
+    computed at the provided validation indices.
     """
 
     def __init__(
@@ -153,7 +154,7 @@ class PSO(object):
 
         for i in range(self.particle_num):
             for j in range(self.particle_dim):
-                # 线性归一化回到[min_value, max_value]
+                # Linearly normalize values back into [min_value, max_value]
                 denom = (value[j][0] - value[j][1]) or 1.0
                 particle_loc[i][j] = (particle_loc[i][j] - value[j][1]) / denom * (self.max_value - self.min_value) + self.min_value
 
@@ -364,7 +365,7 @@ def formatDatafillingResult(
     point_lng_lat: str,
     include_coords: bool = False,
 ) -> Tuple[str, List[float]]:
-    """和 writeDatafillingResult 输出一致，但返回字符串，便于并行收集后统一写盘。"""
+    """Return the same output format as writeDatafillingResult, but as a string for parallel collection and ordered writing."""
     parts: List[str] = []
     if include_coords:
         header = f"{key_words}:{point_lng_lat}:"
@@ -393,9 +394,9 @@ def formatDatafillingResult(
 
 
 def _process_point_worker(args: Tuple[Any, ...]) -> Tuple[int, str, str, float, float]:
-    """单点并行 worker。
+    """Parallel worker for a single point.
 
-    返回: (key_words, line, mape, relative_error)
+    Returns: (key_words, line, mape, relative_error)
     """
     (
         idx,
@@ -412,7 +413,7 @@ def _process_point_worker(args: Tuple[Any, ...]) -> Tuple[int, str, str, float, 
         base_seed,
     ) = args
 
-    # 0) 确定性随机种子（可复现且不同点不同）
+    # 0) Deterministic random seed for reproducible but point-specific runs
     try:
         s = None if base_seed is None else int(base_seed) + int(idx)
     except Exception:
@@ -424,7 +425,7 @@ def _process_point_worker(args: Tuple[Any, ...]) -> Tuple[int, str, str, float, 
         except Exception:
             pass
 
-    # 1) 重建连续日期序列
+    # 1) Rebuild a continuous date sequence
     new_time_series: List[str] = []
     new_NTLValue_series: List[Optional[float]] = []
     i_count = 0
@@ -494,15 +495,15 @@ def _process_point_worker(args: Tuple[Any, ...]) -> Tuple[int, str, str, float, 
             new_time_series.append(str(YYYYMMDD_list[0]) + str(YYYYMMDD_list[1]) + str(YYYYMMDD_list[2]))
             new_NTLValue_series.append(None)
 
-    # 2) 组织 DataFrame
+    # 2) Build the DataFrame
     column_name = ['ds', 'y']
     df = pd.DataFrame(np.vstack((new_time_series, new_NTLValue_series)).T, columns=column_name)
-    # 训练索引
+    # Training indices
     testIndex_list_allDst_rest: List[int] = []
     for tsTime in time_series:
         testIndex_list_allDst_rest.append(df[df.ds == tsTime].index.tolist()[0])
 
-    # 3) PSO 参数边界
+    # 3) PSO parameter bounds
     max_value = int(len(ntl_values) * float(pso_cfg.get("max_n_changepoints_ratio", 0.6)))
     min_value = float(pso_cfg.get("min_value", 0.01))
 
@@ -526,7 +527,7 @@ def _process_point_worker(args: Tuple[Any, ...]) -> Tuple[int, str, str, float, 
     )
     glo_gbest_parameter = pso.main()
 
-    # 5) 拟合与预测
+    # 5) Fit and forecast
     m = Prophet(
         seasonality_mode=prophet_base.get("seasonality_mode", "additive"),
         seasonality_prior_scale=glo_gbest_parameter[0],
@@ -536,7 +537,7 @@ def _process_point_worker(args: Tuple[Any, ...]) -> Tuple[int, str, str, float, 
         daily_seasonality=prophet_base.get("daily_seasonality", False),
         weekly_seasonality=prophet_base.get("weekly_seasonality", False),
     )
-    # Prophet 拟合：尽可能传 seed，若后端不支持则回退
+    # Prophet fitting: pass a seed when supported and fall back otherwise
     try:
         m.fit(df, seed=s if s is not None else None)
     except TypeError:
@@ -544,7 +545,7 @@ def _process_point_worker(args: Tuple[Any, ...]) -> Tuple[int, str, str, float, 
     future = m.make_future_dataframe(periods=int(future_days), freq='D')
     forecast = m.predict(future)
 
-    # 6) 指标与序列化
+    # 6) Metrics and serialization
     mape = mean_forecast_err1(ntl_values, testIndex_list_allDst_rest, forecast[['ds', 'yhat']])
     try:
         relative_error_once = mape / (np.mean(ntl_values) or 1.0)
@@ -575,9 +576,9 @@ def run_prophet_pipeline(
     flags: Optional[Dict[str, Any]] = None,
     random_seed: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """执行从读取TXT数据、PSO寻参到Prophet拟合与填充输出的整流程。
+    """Run the full pipeline from reading TXT data and PSO search to Prophet fitting and filled-output export.
 
-    返回值包含简单的统计信息。
+    Returns a summary dictionary with basic statistics.
     """
 
     t_start = time.time()
@@ -589,7 +590,7 @@ def run_prophet_pipeline(
         except Exception:
             pass
 
-    # 默认 PSO 配置
+    # Default PSO configuration
     pso_cfg = {
         "particle_num": 3,
         "particle_dim": 3,
@@ -603,7 +604,7 @@ def run_prophet_pipeline(
     if pso_config:
         pso_cfg.update(pso_config)
 
-    # 默认 Prophet 固定参数
+    # Default fixed Prophet parameters
     prophet_base = {
         "seasonality_mode": "additive",
         "daily_seasonality": False,
@@ -613,7 +614,7 @@ def run_prophet_pipeline(
     if prophet_config:
         prophet_base.update(prophet_config)
 
-    # 默认开关
+    # Default feature flags
     flg = {
         "enable_pso_plot": False,
         "enable_forecast_plot": False,
@@ -622,13 +623,13 @@ def run_prophet_pipeline(
         "progress_bar": True,
         "quiet": True,
         "parallel_points": False,
-        "num_workers": None,  # None 表示使用系统默认
-        "write_metrics_report": True,  # 是否写出每点精度的CSV报告
+        "num_workers": None,  # None means use the system default
+        "write_metrics_report": True,  # Whether to write a per-point metrics CSV report
     }
     if flags:
         flg.update(flags)
 
-    # 静默 prophet 自身的 INFO 日志
+    # Silence Prophet INFO logs
     try:
         logging.getLogger(_PROPHET_LOGGER_NAME).setLevel(logging.WARNING)
     except Exception:
@@ -636,7 +637,7 @@ def run_prophet_pipeline(
 
     processed_points = 0
     outputs: List[str] = []
-    all_metrics: List[Dict[str, Any]] = []  # 全部文件的汇总
+    all_metrics: List[Dict[str, Any]] = []  # Summary across all processed files
 
     freq = 0
     while freq < loop_max_freq:
@@ -658,12 +659,12 @@ def run_prophet_pipeline(
 
         outputs.append(outputFile)
 
-        # 为该文件收集每点指标
+        # Collect per-point metrics for this file
         per_file_metrics: List[Tuple[str, float, float]] = []  # (point_id, mae, rel_err)
 
         key_list = list(time_series_dic.keys())
 
-        # 并行 or 串行
+        # Parallel or serial execution
         if flg.get("parallel_points", False):
             max_workers = flg.get("num_workers") or max(1, (os.cpu_count() or 2) - 1)
             with ProcessPoolExecutor(max_workers=max_workers) as ex:
@@ -690,19 +691,19 @@ def run_prophet_pipeline(
                     )
                 pbar = tqdm(total=len(futures), desc=f"Points {freq+1}/{loop_max_freq}") if flg.get("progress_bar", True) else None
 
-                # 增量写盘并保持原始顺序：使用缓冲与 next_idx 指针
+                # Incrementally write results while preserving original order via a buffer and next_idx pointer
                 next_idx = 0
                 buffer: Dict[int, str] = {}
                 with open(outputFile, 'a') as f:
                     for fut in as_completed(futures):
                         idx, key_words, line, mape, rel = fut.result()
                         buffer[idx] = line
-                        # 指标记录（以 mape 命名但数值为 MAE）
+                        # Record metrics (historically named mape but numerically MAE)
                         try:
                             per_file_metrics.append((str(key_words), float(mape), float(rel)))
                         except Exception:
                             pass
-                        # 尝试按序写出连续区间
+                        # Try writing consecutive buffered records in order
                         while next_idx in buffer:
                             f.write(buffer.pop(next_idx))
                             processed_points += 1
@@ -712,13 +713,13 @@ def run_prophet_pipeline(
                 if pbar is not None:
                     pbar.close()
         else:
-            # 原串行路径，保留进度条与静默控制
+            # Original serial path with progress bar and quiet-mode control preserved
             key_iter = key_list
             if flg.get("progress_bar", True):
                 key_iter = tqdm(key_list, desc=f"Points {freq+1}/{loop_max_freq}")
             with open(outputFile, 'a') as f:
                 for idx, key_words in enumerate(key_iter):
-                    # 为该点设定确定性随机种子
+                    # Set a deterministic random seed for this point
                     s = None
                     try:
                         s = int(random_seed) + int(idx) if random_seed is not None else None
@@ -730,14 +731,14 @@ def run_prophet_pipeline(
                             np.random.seed(s)
                         except Exception:
                             pass
-                    # 取出训练拟合的数据
+                    # Extract the training data for fitting
                     test_time_series_rest: List[str] = []
                     test_NTLValue_series_rest: List[float] = []
                     for index in range(len(time_series_dic[key_words])):
                         test_time_series_rest.append(time_series_dic[key_words][index])
                         test_NTLValue_series_rest.append(NTLValue_series_dic[key_words][index])
 
-                    # 构造连续序列并以 None 填补缺失（与 worker 同步）
+                    # Build a continuous sequence and fill missing values with None (same logic as the worker)
                     new_time_series: List[str] = []
                     new_NTLValue_series: List[Optional[float]] = []
                     i_count = 0
@@ -807,15 +808,15 @@ def run_prophet_pipeline(
                             new_time_series.append(str(YYYYMMDD_list[0]) + str(YYYYMMDD_list[1]) + str(YYYYMMDD_list[2]))
                             new_NTLValue_series.append(None)
 
-                    # 组织 DataFrame
+                    # Build the DataFrame
                     column_name = ['ds', 'y']
                     df = pd.DataFrame(np.vstack((new_time_series, new_NTLValue_series)).T, columns=column_name)
-                    # 训练索引
+                    # Training indices
                     testIndex_list_allDst_rest: List[int] = []
                     for tsTime in test_time_series_rest:
                         testIndex_list_allDst_rest.append(df[df.ds == tsTime].index.tolist()[0])
 
-                    # PSO 参数边界
+                    # PSO parameter bounds
                     max_value = int(len(NTLValue_series_dic[key_words]) * float(pso_cfg.get("max_n_changepoints_ratio", 0.6)))
                     min_value = float(pso_cfg.get("min_value", 0.01))
 
@@ -838,7 +839,7 @@ def run_prophet_pipeline(
                     )
                     glo_gbest_parameter = pso.main()
 
-                    # 使用最优参数拟合
+                    # Fit using the best parameters
                     m = Prophet(
                         seasonality_mode=prophet_base.get("seasonality_mode", "additive"),
                         seasonality_prior_scale=glo_gbest_parameter[0],
@@ -848,7 +849,7 @@ def run_prophet_pipeline(
                         daily_seasonality=prophet_base.get("daily_seasonality", False),
                         weekly_seasonality=prophet_base.get("weekly_seasonality", False),
                     )
-                    # Prophet 拟合，传递 seed 保证可复现
+                    # Fit Prophet with a seed to keep runs reproducible
                     try:
                         m.fit(df, seed=s if s is not None else None)
                     except TypeError:
@@ -883,7 +884,7 @@ def run_prophet_pipeline(
                         include_coords=bool(flg.get("output_include_coords", False)),
                     )
 
-                    # 记录单点指标
+                    # Record per-point metrics
                     try:
                         per_file_metrics.append((str(key_words), float(mape), float(relative_error_once)))
                     except Exception:
@@ -899,7 +900,7 @@ def run_prophet_pipeline(
 
                     processed_points += 1
 
-        # 本文件处理完：写出精度报告（CSV）并计算摘要
+        # After processing this file, write the metrics report (CSV) and compute summary statistics
         metrics_summary: Dict[str, Any] = {}
         if per_file_metrics:
             mae_list = [m[1] for m in per_file_metrics if m[1] is not None]
@@ -930,7 +931,7 @@ def run_prophet_pipeline(
                 "rel_med": rel_med,
             }
 
-            # 写出 CSV 报告
+            # Write the CSV report
             if flg.get("write_metrics_report", True):
                 report_path = os.path.splitext(outputFile)[0] + "_metrics.csv"
                 try:
@@ -944,12 +945,12 @@ def run_prophet_pipeline(
 
         all_metrics.append(metrics_summary)
 
-        # 循环递增
+        # Increment loop counter
         freq += 1
 
-    # 执行结束，返回统计信息
+    # Finish execution and return summary information
     t_end = time.time()
-    # 汇总所有文件的精度摘要
+    # Aggregate accuracy summaries for all files
     summary_metrics = all_metrics
 
     return {

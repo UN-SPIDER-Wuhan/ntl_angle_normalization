@@ -20,7 +20,7 @@ def _as_datetime(value: DateLike, accepted_formats: Sequence[str]) -> datetime:
             return datetime.strptime(value, fmt)
         except ValueError:
             continue
-    raise ValueError(f"无法解析日期: {value}. 支持格式: {accepted_formats}")
+    raise ValueError(f"Unable to parse date: {value}. Supported formats: {accepted_formats}")
 
 
 def _parse_text_entries(txt_path: str) -> List[Tuple[int, str]]:
@@ -58,18 +58,19 @@ def txt_to_daily_geotiffs(
     nodata_value: float = -9999.0,
     date_formats: Optional[Iterable[str]] = None,
 ) -> List[str]:
-    """将点位时序 txt 转为逐日 GeoTIFF。
+        """Convert point-based time-series text into daily GeoTIFF files.
 
-    参数说明:
-    - template_tif: 模板影像路径。提供后自动继承空间参考、分辨率和宽高。
-    - 无模板模式: 需手动传 width、height、transform、crs。
-    - txt 格式默认兼容: pointN:lng,lat:YYYYMMDD,Zenith,NTL;...
-    """
+        Parameters:
+        - template_tif: Path to a template raster. When provided, spatial metadata,
+            resolution, width, and height are inherited automatically.
+        - template-free mode: Requires width, height, transform, and crs.
+        - supported txt format: pointN:lng,lat:YYYYMMDD,Zenith,NTL;...
+        """
     accepted_formats = tuple(date_formats) if date_formats else ("%Y%m%d", "%Y-%m-%d")
     start_dt = _as_datetime(start_date, accepted_formats)
     end_dt = _as_datetime(end_date, accepted_formats)
     if end_dt < start_dt:
-        raise ValueError("end_date 不能早于 start_date")
+        raise ValueError("end_date cannot be earlier than start_date")
 
     meta = {}
     if template_tif:
@@ -79,10 +80,10 @@ def txt_to_daily_geotiffs(
             width = src.width
     else:
         if width is None or height is None or transform is None or crs is None:
-            raise ValueError("无模板模式下，必须提供 width、height、transform、crs")
+            raise ValueError("In template-free mode, width, height, transform, and crs are required")
         if isinstance(transform, (list, tuple)):
             if len(transform) != 6:
-                raise ValueError("transform 序列长度必须为 6，格式为 Affine(a,b,c,d,e,f)")
+                raise ValueError("transform must contain 6 values in Affine(a, b, c, d, e, f) order")
             transform = Affine(*transform)
         meta = {
             "driver": "GTiff",

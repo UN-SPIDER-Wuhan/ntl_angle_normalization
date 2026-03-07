@@ -1,21 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-角度归一化处理模块 (Gradient Descent / Least Squares)
+Angle normalization module (Gradient Descent / Least Squares).
 
-本模块提供夜光遥感数据的传感器天顶角归一化功能，包括：
-- 数据读取与解析
-- 拟合优度与相关性计算
-- 角度归一化核心算法
-- 时间序列可视化与指标计算
-- 并行化处理支持
+This module provides sensor zenith angle normalization for nighttime light data,
+including:
+- data loading and parsing
+- goodness-of-fit and correlation metrics
+- the core angle-normalization algorithm
+- time-series visualization and indicator calculation
+- parallel processing support
 
-使用示例:
+Example:
     from functions.angle_normalization import (
         readFile, visScatterAndFitCurve, visTimeSeries
     )
-    
+
     pointNumLngLatMap, pointsDic, keyList = readFile('input.txt')
-    visScatterAndFitCurve(pointsDic, output_file, fit_result_path, 
+    visScatterAndFitCurve(pointsDic, output_file, fit_result_path,
                           pointNumLngLatMap, output_params_path)
 """
 
@@ -33,24 +34,24 @@ import warnings
 
 
 # =============================================================================
-# 数据读取函数
+# Data loading functions
 # =============================================================================
 
 def readFile(filePath: str, min_records: int = 10):
     """
-    读取时间序列文本文件，解析为字典结构。
-    
-    文件格式:
+    Read a time-series text file and parse it into dictionary form.
+
+    File format:
         pointNum:lng,lat(left top):YYYYMMDD,Zenith,NTLValue;...
-    
-    参数:
-        filePath: 输入文件路径
-        min_records: 最少记录数阈值，少于此数的点将被过滤（默认10）
-    
-    返回:
-        pointNumLngLatMap: {pointNum: "lng,lat"} 点位坐标映射
-        pointsDic: {pointNum: [[NTLValue, Zenith, YYYYMMDD], ...]} 时间序列数据
-        keyList: 所有点位编号列表（含被过滤的）
+
+    Parameters:
+        filePath: input file path
+        min_records: minimum number of records required per point (default: 10)
+
+    Returns:
+        pointNumLngLatMap: {pointNum: "lng,lat"} point coordinate mapping
+        pointsDic: {pointNum: [[NTLValue, Zenith, YYYYMMDD], ...]} time-series data
+        keyList: list of all point IDs, including filtered ones
     """
     with open(filePath, 'r', encoding='utf-8') as f:
         lines = f.readlines()
@@ -60,7 +61,7 @@ def readFile(filePath: str, min_records: int = 10):
     keyList = []
     
     for i, line in enumerate(lines):
-        if i == 0:  # 跳过表头
+        if i == 0:  # Skip the header line
             continue
         
         temp_list = line.strip().split(":")
@@ -87,7 +88,7 @@ def readFile(filePath: str, min_records: int = 10):
                 except (ValueError, IndexError):
                     continue
     
-    # 过滤记录数不足的点
+    # Filter out points with too few records
     new_pointsDic = {}
     new_pointNumLngLatMap = {}
     for key in pointsDic:
@@ -106,14 +107,14 @@ def filter_points_outliers_3sigma(
         min_records_after_filter: int = 10,
         verbose: bool = True):
     """
-    在归一化前按点位执行异常值过滤（3-sigma + 可选硬阈值）。
+    Apply point-wise outlier filtering before normalization (3-sigma plus an optional hard threshold).
 
-    规则:
-    1. 对每个点位的 NTL 序列按 |x-mean| <= sigma*std 过滤（std=0 时跳过 3-sigma）
-    2. 若设置 ntl_upper_bound，则同时过滤 NTL > 上限 的记录
-    3. 过滤后记录数 < min_records_after_filter 的点位将被剔除
+    Rules:
+    1. Filter each point's NTL series with |x - mean| <= sigma * std (skip 3-sigma when std = 0)
+    2. If ntl_upper_bound is provided, also filter records where NTL exceeds that upper limit
+    3. Drop points with fewer than min_records_after_filter records after filtering
 
-    返回:
+    Returns:
         filtered_pointsDic, filtered_pointNumLngLatMap, summary
     """
     filtered_points = {}
@@ -136,7 +137,7 @@ def filter_points_outliers_3sigma(
 
         keep_mask = np.ones(len(records), dtype=bool)
 
-        # 3-sigma 过滤
+        # 3-sigma filtering
         mean_v = float(np.mean(ntl_vals))
         std_v = float(np.std(ntl_vals))
         if std_v > 0:
@@ -144,7 +145,7 @@ def filter_points_outliers_3sigma(
             removed_by_sigma += int((~sigma_mask).sum())
             keep_mask &= sigma_mask
 
-        # 可选硬阈值过滤
+        # Optional hard-threshold filtering
         if ntl_upper_bound is not None:
             upper_mask = ntl_vals <= float(ntl_upper_bound)
             removed_by_upper += int((~upper_mask).sum())
@@ -176,27 +177,27 @@ def filter_points_outliers_3sigma(
     }
 
     if verbose:
-        print('[info] 归一化前异常值过滤（3-sigma）完成: ' +
-              f"点位 {summary['points_before']} -> {summary['points_after']}，" +
-              f"记录 {summary['records_before']} -> {summary['records_after']}")
+        print('[info] Pre-normalization outlier filtering (3-sigma) completed: ' +
+              f"points {summary['points_before']} -> {summary['points_after']}，" +
+              f"records {summary['records_before']} -> {summary['records_after']}")
 
     return filtered_points, filtered_map, summary
 
 
 # =============================================================================
-# 统计与拟合辅助函数
+# Statistical and fitting helper functions
 # =============================================================================
 
 def calGoodnessOfFit(y_pred: np.ndarray, y_true: np.ndarray) -> float:
     """
-    计算拟合优度 R²（决定系数）。
-    
-    参数:
-        y_pred: 预测值数组
-        y_true: 真实值数组
-    
-    返回:
-        R² 值，范围 (-∞, 1]，越接近1拟合越好
+    Compute the goodness of fit R² (coefficient of determination).
+
+    Parameters:
+        y_pred: predicted values
+        y_true: observed values
+
+    Returns:
+        R² in the range (-∞, 1], where values closer to 1 indicate a better fit
     """
     y_true = np.array(y_true)
     y_pred = np.array(y_pred)
@@ -213,14 +214,14 @@ def calGoodnessOfFit(y_pred: np.ndarray, y_true: np.ndarray) -> float:
 
 def calCorrelation(x_array, y_array) -> float:
     """
-    计算 Pearson 相关系数。
+    Compute the Pearson correlation coefficient.
+
+    Parameters:
+        x_array: X array
+        y_array: Y array
     
-    参数:
-        x_array: X 数组
-        y_array: Y 数组
-    
-    返回:
-        相关系数，范围 [-1, 1]；若标准差为0则返回 np.nan
+    Returns:
+        Correlation coefficient in the range [-1, 1]; returns np.nan when either standard deviation is zero
     """
     x = np.array(x_array)
     y = np.array(y_array)
@@ -236,40 +237,40 @@ def calCorrelation(x_array, y_array) -> float:
 
 
 def _func_quadratic(p, x):
-    """二次函数: f(x) = a*x² + b*x + c"""
+    """Quadratic function: f(x) = a*x² + b*x + c"""
     a, b, c = p
     return a * x ** 2 + b * x + c
 
 
 def _func_quadratic_c1(p, x):
-    """二次函数（截距固定为1）: f(x) = a*x² + b*x + 1"""
+    """Quadratic function with intercept fixed at 1: f(x) = a*x² + b*x + 1"""
     a, b = p
     return a * x ** 2 + b * x + 1
 
 
 def _error_quadratic(p, x, y):
-    """二次拟合的均方误差"""
+    """Mean squared error of the quadratic fit"""
     return (1 / len(x)) * (_func_quadratic(p, x) - y) ** 2
 
 
 def _error_quadratic_c1(p, x, y):
-    """截距为1的二次拟合均方误差"""
+    """Mean squared error of the quadratic fit with intercept fixed at 1"""
     return (1 / len(x)) * (_func_quadratic_c1(p, x) - y) ** 2
 
 
 # =============================================================================
-# 单点归一化处理函数（用于并行化）
+# Single-point normalization function for parallel execution
 # =============================================================================
 
 def _normalize_single_point(args):
     """
-    处理单个点位的角度归一化（用于并行计算）。
-    
-    参数:
-        args: (key, X, Y, time_values) 元组
-    
-    返回:
-        dict: 包含点位信息、归一化结果和统计指标
+    Normalize a single point's angle effect for parallel execution.
+
+    Parameters:
+        args: tuple of (key, X, Y, time_values)
+
+    Returns:
+        dict containing point information, normalized values, and statistics
     """
     key, X, Y, time_values = args
     
@@ -278,15 +279,15 @@ def _normalize_single_point(args):
     mean_ntl = float(np.mean(Y)) if len(Y) else 0.0
     
     try:
-        # Step 1: 多项式拟合初始参数
+        # Step 1: Initial polynomial fit parameters
         parameters = np.polyfit(X, Y, 2)
         
-        # Step 2: 最小二乘优化
+        # Step 2: Least-squares optimization
         parameter_init = np.array([0, 0, 0])
         Para = leastsq(_error_quadratic, parameter_init, args=(X, Y))
         a, b, c = Para[0]
         
-        # 计算拟合指标
+        # Compute fit metrics
         fit_y = parameters[0] * X ** 2 + parameters[1] * X + parameters[2]
         GoodnessOfFit_score = calGoodnessOfFit(fit_y, Y)
         r, p_value = stats.pearsonr(fit_y, Y)
@@ -294,15 +295,15 @@ def _normalize_single_point(args):
         fit_y_leastsq = a * X ** 2 + b * X + c
         GoodnessOfFit_score_leastsq = calGoodnessOfFit(fit_y_leastsq, Y)
         
-        # Step 3: 优化归一化参数
+        # Step 3: Optimize normalization parameters
         Z = X
         R = Y
         
-        # 防止除以 0
+        # Prevent division by zero
         base_c = parameters[2] if parameters[2] != 0 else 1e-6
         p0 = np.array([parameters[0] / base_c, parameters[1] / base_c, 0, 0, base_c])
         
-        # 优化目标：最大化校正后数据与趋势的相关性
+        # Optimization objective: maximize the correlation between corrected data and the fitted trend
         def objective(p):
             denom = p[0] * (Z**2) + p[1] * Z + np.ones(len(Z))
             corrected = R / denom
@@ -326,14 +327,14 @@ def _normalize_single_point(args):
             warnings.simplefilter("ignore")
             p_final = scipy.optimize.fmin(func=objective, x0=p0, disp=False)
         
-        # Step 4: 应用归一化
+        # Step 4: Apply normalization
         normalizationY = R / (p_final[0] * (Z**2) + p_final[1] * Z + np.ones(len(Z)))
         
-        # 处理负值（保留原始值）
+        # Handle negative values by keeping the original value
         negative_mask = normalizationY < 0
         normalizationY[negative_mask] = R[negative_mask]
         
-        # 归一化后再评估与天顶角的相关性（越低越好）
+        # Re-evaluate correlation with zenith angle after normalization (lower is better)
         try:
             post_params = np.polyfit(Z, normalizationY, 2)
             post_fit = post_params[0] * Z ** 2 + post_params[1] * Z + post_params[2]
@@ -375,7 +376,7 @@ def _normalize_single_point(args):
 
 
 # =============================================================================
-# 角度归一化核心函数
+# Core angle-normalization function
 # =============================================================================
 
 def normalizationZenith(visX_dic: dict, visY_dic: dict, 
@@ -383,24 +384,24 @@ def normalizationZenith(visX_dic: dict, visY_dic: dict,
                         plot_scatter: bool = False, verbose: bool = True,
                         progress=None, stats_collector=None):
     """
-    对每个点位进行角度归一化处理。
-    
-    算法流程:
-    1. 对每个点的 (Zenith, NTL) 数据进行二次多项式拟合
-    2. 使用最小二乘法优化参数
-    3. 通过优化目标函数（最大化校正后与趋势的相关性）进一步优化
-    4. 应用归一化公式: NTL_corrected = NTL / (a*Z² + b*Z + 1)
-    
-    参数:
-        visX_dic: {pointNum: [Zenith values]} 天顶角数据
-        visY_dic: {pointNum: [NTL values]} 夜光亮度数据
-        outputFile: 输出拟合结果文件路径（记录 R²）
-        output_params_path: 输出参数文件路径
-        plot_scatter: 是否绘制散点图（默认 False）
-        verbose: 是否打印详细信息（默认 True）
-    
-    返回:
-        normalizationResult_array: 归一化后的 NTL 数组列表
+    Perform angle normalization for each point.
+
+    Workflow:
+    1. Fit a quadratic polynomial to each point's (Zenith, NTL) data.
+    2. Refine the parameters with least squares.
+    3. Further optimize the objective by maximizing the correlation between corrected values and the trend.
+    4. Apply the normalization formula: NTL_corrected = NTL / (a*Z² + b*Z + 1)
+
+    Parameters:
+        visX_dic: {pointNum: [Zenith values]} zenith-angle data
+        visY_dic: {pointNum: [NTL values]} nighttime-light brightness data
+        outputFile: output path for fit metrics (records R²)
+        output_params_path: output path for fitted parameters
+        plot_scatter: whether to plot scatter charts (default False)
+        verbose: whether to print verbose logs (default True)
+
+    Returns:
+        normalizationResult_array: list of normalized NTL arrays
     """
     if stats_collector is None:
         stats_collector = []
@@ -415,10 +416,10 @@ def normalizationZenith(visX_dic: dict, visY_dic: dict,
             Y = np.array(visY_dic[key])
             mean_ntl = float(np.mean(Y)) if len(Y) else 0.0
             
-            # Step 1: 多项式拟合初始参数
+            # Step 1: Initial polynomial fit parameters
             parameters = np.polyfit(X, Y, 2)
             
-            # Step 2: 最小二乘优化
+            # Step 2: Least-squares optimization
             parameter_init = np.array([0, 0, 0])
             Para = leastsq(_error_quadratic, parameter_init, args=(X, Y))
             a, b, c = Para[0]
@@ -426,7 +427,7 @@ def normalizationZenith(visX_dic: dict, visY_dic: dict,
             if verbose:
                 print(f'{key} | polyfit a={parameters[0]:.5f} b={parameters[1]:.5f} c={parameters[2]:.5f}')
             
-            # 计算拟合指标
+            # Compute fit metrics
             fit_y = parameters[0] * X ** 2 + parameters[1] * X + parameters[2]
             GoodnessOfFit_score = calGoodnessOfFit(fit_y, Y)
             r, p_value = stats.pearsonr(fit_y, Y)
@@ -438,7 +439,7 @@ def normalizationZenith(visX_dic: dict, visY_dic: dict,
                 print(f'R2 polyfit: {GoodnessOfFit_score:.4f} | Pearson r²: {r**2:.4f} p: {p_value:.4e}')
                 print(f'R2 leastsq: {GoodnessOfFit_score_leastsq:.4f}')
 
-            # 归一化后再评估与天顶角的相关性（越低越好）
+            # Re-evaluate correlation with zenith angle after normalization (lower is better)
             try:
                 post_params = np.polyfit(Z, normalizationY, 2)
                 post_fit = post_params[0] * Z ** 2 + post_params[1] * Z + post_params[2]
@@ -455,15 +456,15 @@ def normalizationZenith(visX_dic: dict, visY_dic: dict,
                 'mean_ntl': mean_ntl
             })
             
-            # Step 3: 优化归一化参数
+            # Step 3: Optimize normalization parameters
             Z = X
             R = Y
             
-            # 防止除以 0
+            # Prevent division by zero
             base_c = parameters[2] if parameters[2] != 0 else 1e-6
             p0 = np.array([parameters[0] / base_c, parameters[1] / base_c, 0, 0, base_c])
             
-            # 优化目标：最大化校正后数据与趋势的相关性
+            # Optimization objective: maximize the correlation between corrected data and the fitted trend
             def objective(p):
                 denom = p[0] * (Z**2) + p[1] * Z + np.ones(len(Z))
                 corrected = R / denom
@@ -485,20 +486,20 @@ def normalizationZenith(visX_dic: dict, visY_dic: dict,
             
             p_final = scipy.optimize.fmin(func=objective, x0=p0, disp=False)
             
-            # Step 4: 应用归一化
+            # Step 4: Apply normalization
             normalizationY = R / (p_final[0] * (Z**2) + p_final[1] * Z + np.ones(len(Z)))
             
-            # 处理负值（保留原始值）
+            # Handle negative values by keeping the original value
             negative_mask = normalizationY < 0
             normalizationY[negative_mask] = R[negative_mask]
             
             normalizationResult_array.append(normalizationY)
             
-            # 写入结果
+            # Write results
             f.write(f'{key}:{r ** 2}\n')
             f1.write(f'{key}:{",".join([str(x) for x in p_final])}\n')
             
-            # 可选绘图
+            # Optional plotting
             if plot_scatter:
                 _plot_scatter_fit(key, X, Y, normalizationY, parameters)
 
@@ -508,12 +509,12 @@ def normalizationZenith(visX_dic: dict, visY_dic: dict,
                 avg_before = sum(before_vals) / len(before_vals) if before_vals else 0.0
                 avg_after = sum(after_vals) / len(after_vals) if after_vals else 0.0
                 progress.set_postfix({
-                    '点号': key,
-                    '均值': f'{mean_ntl:.2f}',
-                    'R2前': f'{GoodnessOfFit_score:.3f}',
-                    'R2后': f'{r2_post:.3f}' if not np.isnan(r2_post) else 'nan',
-                    '均前': f'{avg_before:.3f}',
-                    '均后': f'{avg_after:.3f}'
+                    'point': key,
+                    'mean': f'{mean_ntl:.2f}',
+                    'R2_before': f'{GoodnessOfFit_score:.3f}',
+                    'R2_after': f'{r2_post:.3f}' if not np.isnan(r2_post) else 'nan',
+                    'avg_before': f'{avg_before:.3f}',
+                    'avg_after': f'{avg_after:.3f}'
                 })
                 progress.update(1)
     
@@ -521,12 +522,12 @@ def normalizationZenith(visX_dic: dict, visY_dic: dict,
 
 
 # =============================================================================
-# 并行化归一化处理
+# Parallel normalization processing
 # =============================================================================
 
 def _normalize_batch(batch_args):
     """
-    批量处理多个点位（减少进程间通信开销）
+    Process multiple points in one batch to reduce inter-process communication overhead.
     """
     results = []
     for args in batch_args:
@@ -538,36 +539,36 @@ def normalizationZenith_parallel(visX_dic: dict, visY_dic: dict, visTime_dic: di
                                   n_workers: int = None, show_progress: bool = True,
                                   verbose: bool = False, batch_size: int = None):
     """
-    使用多进程并行处理角度归一化。
-    
-    参数:
-        visX_dic: {pointNum: [Zenith values]} 天顶角数据
-        visY_dic: {pointNum: [NTL values]} 夜光亮度数据
-        visTime_dic: {pointNum: [Date values]} 时间数据
-        n_workers: 并行进程数，默认为 CPU 核心数
-        show_progress: 是否显示进度条
-        verbose: 是否打印详细信息
-        batch_size: 每批处理的点位数，默认自动计算
-    
-    返回:
-        results_dict: {key: result} 结果字典
-        stats_collector: 统计信息列表
+    Perform angle normalization in parallel with multiple processes.
+
+    Parameters:
+        visX_dic: {pointNum: [Zenith values]} zenith-angle data
+        visY_dic: {pointNum: [NTL values]} nighttime-light data
+        visTime_dic: {pointNum: [Date values]} timestamp data
+        n_workers: number of worker processes, defaulting to CPU core count
+        show_progress: whether to show a progress bar
+        verbose: whether to print verbose logs
+        batch_size: number of points per batch; computed automatically by default
+
+    Returns:
+        results_dict: {key: result} result dictionary
+        stats_collector: list of statistics
     """
     if n_workers is None:
         n_workers = max(1, multiprocessing.cpu_count() - 1)
     
-    # 准备任务列表
+    # Prepare the task list
     tasks = []
     for key in visX_dic:
         tasks.append((key, visX_dic[key], visY_dic[key], visTime_dic[key]))
     
     total_points = len(tasks)
     
-    # 自动计算批大小：每个进程至少处理 50 个点，减少进程通信开销
+    # Automatically determine batch size: at least 50 points per process to reduce communication overhead
     if batch_size is None:
         batch_size = max(50, total_points // (n_workers * 4))
     
-    # 将任务分批
+    # Split tasks into batches
     batches = [tasks[i:i + batch_size] for i in range(0, len(tasks), batch_size)]
     
     results_dict = {}
@@ -575,20 +576,20 @@ def normalizationZenith_parallel(visX_dic: dict, visY_dic: dict, visTime_dic: di
     failed_count = 0
     processed_count = 0
     
-    # 使用进程池并行处理批次
+    # Process batches in parallel using a process pool
     progress = None
     try:
         if show_progress:
             try:
                 from tqdm import tqdm
                 progress = tqdm(total=total_points, 
-                               desc=f'AngleNorm(并行x{n_workers}, 批={batch_size})', 
+                               desc=f'AngleNorm(parallel x{n_workers}, batch={batch_size})', 
                                ncols=110)
             except ImportError:
                 progress = None
         
         with ProcessPoolExecutor(max_workers=n_workers) as executor:
-            # 提交所有批次任务
+            # Submit all batch tasks
             future_to_batch = {executor.submit(_normalize_batch, batch): i for i, batch in enumerate(batches)}
             
             for future in as_completed(future_to_batch):
@@ -606,23 +607,23 @@ def normalizationZenith_parallel(visX_dic: dict, visY_dic: dict, visTime_dic: di
                             failed_count += 1
                     
                     if progress is not None:
-                        # 只在批次完成时更新进度
+                        # Update progress only when an entire batch is finished
                         before_vals = [s['r2_polyfit'] for s in stats_collector if not np.isnan(s['r2_polyfit'])]
                         after_vals = [s['r2_post'] for s in stats_collector if not np.isnan(s['r2_post'])]
                         avg_before = sum(before_vals) / len(before_vals) if before_vals else 0.0
                         avg_after = sum(after_vals) / len(after_vals) if after_vals else 0.0
                         progress.update(len(batch_results))
                         progress.set_postfix({
-                            '失败': failed_count,
-                            'R2前': f'{avg_before:.3f}',
-                            'R2后': f'{avg_after:.3f}'
+                            'failed': failed_count,
+                            'R2_before': f'{avg_before:.3f}',
+                            'R2_after': f'{avg_after:.3f}'
                         })
                         
                 except Exception as e:
                     batch_size_actual = len(batches[batch_idx])
                     failed_count += batch_size_actual
                     if verbose:
-                        print(f'[error] 批次处理异常: batch_{batch_idx} -> {e}')
+                        print(f'[error] Batch processing error: batch_{batch_idx} -> {e}')
                     if progress is not None:
                         progress.update(batch_size_actual)
     
@@ -631,7 +632,7 @@ def normalizationZenith_parallel(visX_dic: dict, visY_dic: dict, visTime_dic: di
             progress.close()
     
     if verbose:
-        print(f'[info] 并行处理完成: 成功 {len(results_dict) - failed_count}, 失败 {failed_count}')
+        print(f'[info] Parallel processing completed: succeeded {len(results_dict) - failed_count}, failed {failed_count}')
     
     return results_dict, stats_collector
 
@@ -641,22 +642,22 @@ def visScatterAndFitCurve_parallel(result_dic: dict, outputFile: str, fit_result
                                     n_workers: int = None, show_progress: bool = True,
                                     verbose: bool = False):
     """
-    使用多进程并行执行角度归一化并写入结果。
-    
-    参数:
-        result_dic: readFile 返回的 pointsDic
-        outputFile: 拟合结果输出路径（R² 记录）
-        fit_result_path: 校正后时间序列输出路径
-        pointNumLngLatMap: 点位坐标映射
-        output_params_path: 拟合参数输出路径
-        n_workers: 并行进程数
-        show_progress: 是否显示进度条
-        verbose: 是否打印详细信息
-    
-    返回:
-        stats_collector: 统计信息列表
+    Run angle normalization in parallel and write the output files.
+
+    Parameters:
+        result_dic: pointsDic returned by readFile
+        outputFile: output path for fit metrics (R² records)
+        fit_result_path: output path for corrected time series
+        pointNumLngLatMap: point coordinate mapping
+        output_params_path: output path for fitted parameters
+        n_workers: number of worker processes
+        show_progress: whether to show a progress bar
+        verbose: whether to print verbose logs
+
+    Returns:
+        stats_collector: list of statistics
     """
-    # 整理数据
+    # Organize input data
     visX_dic = {}   # Zenith
     visY_dic = {}   # NTL
     visTime_dic = {}  # Date
@@ -671,20 +672,20 @@ def visScatterAndFitCurve_parallel(result_dic: dict, outputFile: str, fit_result
         visY_dic[key] = y_value
         visTime_dic[key] = time_value
     
-    # 并行执行归一化
+    # Run normalization in parallel
     results_dict, stats_collector = normalizationZenith_parallel(
         visX_dic, visY_dic, visTime_dic,
         n_workers=n_workers, show_progress=show_progress, verbose=verbose
     )
     
-    # 写入结果文件
+    # Write result files
     with open(fit_result_path, 'w', encoding='utf-8') as f1, \
          open(outputFile, 'w', encoding='utf-8') as f2, \
          open(output_params_path, 'w', encoding='utf-8') as f3:
         
         f1.write('pointNum:lng,lat(left top):YYYYMMDD,Zenith,NTLValue;...\n')
         
-        # 按原始顺序写入
+        # Write records in their original order
         for key in visX_dic:
             if key not in results_dict or not results_dict[key]['success']:
                 continue
@@ -694,7 +695,7 @@ def visScatterAndFitCurve_parallel(result_dic: dict, outputFile: str, fit_result
             X = result['X']
             time_values = result['time_values']
             
-            # 写入校正后时间序列
+            # Write the corrected time series
             f1.write(f'{key}:{pointNumLngLatMap[key]}:')
             entries = []
             for k in range(len(normalizationY)):
@@ -702,7 +703,7 @@ def visScatterAndFitCurve_parallel(result_dic: dict, outputFile: str, fit_result
             f1.write(';'.join(entries))
             f1.write('\n')
             
-            # 写入 R² 和参数
+            # Write R² values and fitted parameters
             f2.write(f'{key}:{result["r_squared"]}\n')
             f3.write(f'{key}:{",".join([str(x) for x in result["p_final"]])}\n')
     
@@ -711,7 +712,7 @@ def visScatterAndFitCurve_parallel(result_dic: dict, outputFile: str, fit_result
 
 def _plot_scatter_fit(key: str, X: np.ndarray, Y: np.ndarray, 
                       Y_corrected: np.ndarray, parameters: np.ndarray):
-    """绘制散点图与拟合曲线"""
+    """Plot scatter points and the fitted curve"""
     try:
         x_curve = np.arange(0, 90, 0.02)
         y_curve = parameters[0] * x_curve ** 2 + parameters[1] * x_curve + parameters[2]
@@ -727,11 +728,11 @@ def _plot_scatter_fit(key: str, X: np.ndarray, Y: np.ndarray,
         plt.tight_layout()
         plt.show()
     except Exception as e:
-        print(f'[warn] 绘制散点失败: {key} -> {e}')
+        print(f'[warn] Failed to plot scatter chart: {key} -> {e}')
 
 
 # =============================================================================
-# 拟合并写入校正结果
+# Fit and write corrected results
 # =============================================================================
 
 def visScatterAndFitCurve(result_dic: dict, outputFile: str, fit_result_path: str,
@@ -739,21 +740,21 @@ def visScatterAndFitCurve(result_dic: dict, outputFile: str, fit_result_path: st
                           plot_scatter: bool = False, verbose: bool = True,
                           progress=None, stats_collector=None):
     """
-    执行角度归一化并写入校正后的时间序列结果。
-    
-    参数:
-        result_dic: readFile 返回的 pointsDic
-        outputFile: 拟合结果输出路径（R² 记录）
-        fit_result_path: 校正后时间序列输出路径
-        pointNumLngLatMap: 点位坐标映射
-        output_params_path: 拟合参数输出路径
-        plot_scatter: 是否绘制散点图
-        verbose: 是否打印详细信息
+    Run angle normalization and write the corrected time-series results.
+
+    Parameters:
+        result_dic: pointsDic returned by readFile
+        outputFile: output path for fit metrics (R² records)
+        fit_result_path: output path for corrected time series
+        pointNumLngLatMap: point coordinate mapping
+        output_params_path: output path for fitted parameters
+        plot_scatter: whether to draw scatter plots
+        verbose: whether to print verbose logs
     """
     with open(fit_result_path, 'w', encoding='utf-8') as f1:
         f1.write('pointNum:lng,lat(left top):YYYYMMDD,Zenith,NTLValue;...\n')
         
-        # 整理数据
+        # Organize input data
         visX_dic = {}   # Zenith
         visY_dic = {}   # NTL
         visTime_dic = {}  # Date
@@ -768,14 +769,14 @@ def visScatterAndFitCurve(result_dic: dict, outputFile: str, fit_result_path: st
             visY_dic[key] = y_value
             visTime_dic[key] = time_value
         
-        # 执行归一化
+        # Execute normalization
         normalizationResult_array = normalizationZenith(
             visX_dic, visY_dic, outputFile, output_params_path,
             plot_scatter=plot_scatter, verbose=verbose,
             progress=progress, stats_collector=stats_collector
         )
         
-        # 写入校正结果
+        # Write corrected results
         for norm_index, key in enumerate(visX_dic):
             f1.write(f'{key}:{pointNumLngLatMap[key]}:')
             entries = []
@@ -786,34 +787,34 @@ def visScatterAndFitCurve(result_dic: dict, outputFile: str, fit_result_path: st
 
 
 # =============================================================================
-# 时间序列可视化与指标计算
+# Time-series visualization and metric computation
 # =============================================================================
 
 def visTimeSeries(pointsDic: dict, pointsDic_fit: dict, area: str,
                   plot_series: bool = True, verbose: bool = True):
     """
-    可视化原始与校正后的时间序列，并计算评价指标。
-    
-    计算指标:
-    - NDHDNTL: (max - min) / (max + min)，衡量动态范围
-    - CV: 变异系数 = std / mean * 100，衡量波动程度
-    
-    参数:
-        pointsDic: 原始数据字典
-        pointsDic_fit: 校正后数据字典
-        area: 区域名称（用于图表标题）
-        plot_series: 是否绘制时间序列图
-        verbose: 是否打印指标
-    
-    返回:
+    Visualize original and corrected time series and compute evaluation metrics.
+
+    Metrics:
+    - NDHDNTL: (max - min) / (max + min), describing dynamic range
+    - CV: coefficient of variation = std / mean * 100, describing fluctuation
+
+    Parameters:
+        pointsDic: original data dictionary
+        pointsDic_fit: corrected data dictionary
+        area: area name used in chart titles
+        plot_series: whether to draw time-series plots
+        verbose: whether to print metrics
+
+    Returns:
         metrics: {pointNum: {ori_ndhdntl, fit_ndhdntl, ori_cv, fit_cv}}
     """
-    # 整理原始数据
+    # Organize the original data
     pointsDic_sorted = {}
     for key in pointsDic:
         pointsDic_sorted[key] = []
         for item in pointsDic[key]:
-            if item[1]:  # 有效 Zenith
+            if item[1]:  # Valid zenith value
                 pointsDic_sorted[key].append([item[0], item[1], int(item[2])])
         pointsDic_sorted[key].sort(key=lambda x: x[2])
     
@@ -823,7 +824,7 @@ def visTimeSeries(pointsDic: dict, pointsDic_fit: dict, area: str,
         visNTL_dic[key] = [row[0] for row in pointsDic_sorted[key]]
         visTime_dic[key] = [str(row[2]) for row in pointsDic_sorted[key]]
     
-    # 整理校正后数据（按原始时间对齐）
+    # Organize corrected data aligned to the original timestamps
     pointsDic_fit_sorted = {}
     for key in pointsDic_fit:
         pointsDic_fit_sorted[key] = []
@@ -836,7 +837,7 @@ def visTimeSeries(pointsDic: dict, pointsDic_fit: dict, area: str,
     for key in pointsDic_fit_sorted:
         visNTL_dic_fit[key] = [row[0] for row in pointsDic_fit_sorted[key]]
     
-    # 计算指标并可视化
+    # Compute metrics and generate visualizations
     metrics = {}
     for key in pointsDic_sorted:
         if key not in visNTL_dic_fit or not visNTL_dic_fit[key]:
@@ -878,7 +879,7 @@ def visTimeSeries(pointsDic: dict, pointsDic_fit: dict, area: str,
 
 def _plot_time_series(key: str, area: str, time_strs: list,
                       ori_values: list, fit_values: list):
-    """绘制时间序列对比图"""
+    """Plot a time-series comparison chart"""
     try:
         time_datetime = [dtime.datetime.strptime(t, '%Y%m%d') for t in time_strs]
         
@@ -895,95 +896,95 @@ def _plot_time_series(key: str, area: str, time_strs: list,
         plt.tight_layout()
         plt.show()
     except Exception as e:
-        print(f'[warn] 绘制时间序列失败: {key} -> {e}')
+        print(f'[warn] Failed to plot time series: {key} -> {e}')
 
 
 # =============================================================================
-# 归一化前后对比可视化
+# Visualization comparing results before and after normalization
 # =============================================================================
 
 def display_comparison_results(results: dict, name: str, show_details: int = 10):
     """
-    显示归一化前后的数据对比结果。
-    
-    参数:
-        results: run_angle_normalization 返回的结果字典
-        name: 数据集名称
-        show_details: 显示详细对比的点位数量（默认10）
+    Display comparison results before and after normalization.
+
+    Parameters:
+        results: result dictionary returned by run_angle_normalization
+        name: dataset name
+        show_details: number of points to show in the detailed comparison (default 10)
     """
     import pandas as pd
     
     print(f'\n{"="*50}')
-    print('📊 归一化前后数据对比')
+    print('📊 Comparison before and after normalization')
     print(f'{"="*50}')
     
-    # 1. R² 统计对比
+    # 1. R² statistical comparison
     r2_summary = results.get('r2_summary', {})
     if r2_summary.get('before') and r2_summary.get('after'):
         before = r2_summary['before']
         after = r2_summary['after']
         
         comparison_data = {
-            '指标': ['均值', '中位数', '25%分位', '75%分位', '最小值', '最大值'],
-            'R² (处理前)': [before['mean'], before['median'], before['p25'], before['p75'], before['min'], before['max']],
-            'R² (处理后)': [after['mean'], after['median'], after['p25'], after['p75'], after['min'], after['max']]
+            'Metric': ['Mean', 'Median', '25th percentile', '75th percentile', 'Minimum', 'Maximum'],
+            'R² (before)': [before['mean'], before['median'], before['p25'], before['p75'], before['min'], before['max']],
+            'R² (after)': [after['mean'], after['median'], after['p25'], after['p75'], after['min'], after['max']]
         }
         df_r2 = pd.DataFrame(comparison_data)
-        df_r2['变化'] = df_r2['R² (处理后)'] - df_r2['R² (处理前)']
-        df_r2['R² (处理前)'] = df_r2['R² (处理前)'].apply(lambda x: f'{x:.4f}')
-        df_r2['R² (处理后)'] = df_r2['R² (处理后)'].apply(lambda x: f'{x:.4f}')
-        df_r2['变化'] = df_r2['变化'].apply(lambda x: f'{x:+.4f}')
+        df_r2['Change'] = df_r2['R² (after)'] - df_r2['R² (before)']
+        df_r2['R² (before)'] = df_r2['R² (before)'].apply(lambda x: f'{x:.4f}')
+        df_r2['R² (after)'] = df_r2['R² (after)'].apply(lambda x: f'{x:.4f}')
+        df_r2['Change'] = df_r2['Change'].apply(lambda x: f'{x:+.4f}')
         
-        print('\n🔢 R² 统计对比（R²越低表示天顶角影响越小）:')
+        print('\n🔢 R² summary comparison (lower R² indicates weaker zenith-angle impact):')
         try:
             from IPython.display import display
             display(df_r2)
         except ImportError:
             print(df_r2.to_string(index=False))
     
-    # 2. CV 和 NDHDNTL 指标对比
+    # 2. CV and NDHDNTL metric comparison
     metrics = results.get('metrics', {})
     if metrics:
         metrics_list = []
         for point_id, m in metrics.items():
             metrics_list.append({
-                '点号': point_id,
-                'CV原始(%)': m['ori_cv'],
-                'CV校正(%)': m['fit_cv'],
-                'CV变化(%)': m['fit_cv'] - m['ori_cv'],
-                'NDHDNTL原始': m['ori_ndhdntl'],
-                'NDHDNTL校正': m['fit_ndhdntl'],
-                'NDHDNTL变化': m['fit_ndhdntl'] - m['ori_ndhdntl']
+                'Point': point_id,
+                'CV original (%)': m['ori_cv'],
+                'CV corrected (%)': m['fit_cv'],
+                'CV change (%)': m['fit_cv'] - m['ori_cv'],
+                'NDHDNTL original': m['ori_ndhdntl'],
+                'NDHDNTL corrected': m['fit_ndhdntl'],
+                'NDHDNTL change': m['fit_ndhdntl'] - m['ori_ndhdntl']
             })
         
         df_metrics = pd.DataFrame(metrics_list)
         
-        # 计算汇总统计
+        # Compute summary statistics
         summary = {
-            '指标': ['平均CV(%)', '平均NDHDNTL'],
-            '原始': [df_metrics['CV原始(%)'].mean(), df_metrics['NDHDNTL原始'].mean()],
-            '校正': [df_metrics['CV校正(%)'].mean(), df_metrics['NDHDNTL校正'].mean()],
+            'Metric': ['Mean CV (%)', 'Mean NDHDNTL'],
+            'Original': [df_metrics['CV original (%)'].mean(), df_metrics['NDHDNTL original'].mean()],
+            'Corrected': [df_metrics['CV corrected (%)'].mean(), df_metrics['NDHDNTL corrected'].mean()],
         }
-        summary['变化'] = [summary['校正'][i] - summary['原始'][i] for i in range(len(summary['指标']))]
+        summary['Change'] = [summary['Corrected'][i] - summary['Original'][i] for i in range(len(summary['Metric']))]
         df_summary = pd.DataFrame(summary)
-        df_summary['原始'] = df_summary['原始'].apply(lambda x: f'{x:.4f}')
-        df_summary['校正'] = df_summary['校正'].apply(lambda x: f'{x:.4f}')
-        df_summary['变化'] = df_summary['变化'].apply(lambda x: f'{x:+.4f}')
+        df_summary['Original'] = df_summary['Original'].apply(lambda x: f'{x:.4f}')
+        df_summary['Corrected'] = df_summary['Corrected'].apply(lambda x: f'{x:.4f}')
+        df_summary['Change'] = df_summary['Change'].apply(lambda x: f'{x:+.4f}')
         
-        print('\n📈 CV & NDHDNTL 汇总对比:')
+        print('\n📈 CV and NDHDNTL summary comparison:')
         try:
             from IPython.display import display
             display(df_summary)
         except ImportError:
             print(df_summary.to_string(index=False))
         
-        # 显示前N个点位的详细对比
+        # Display detailed comparisons for the first N points
         if show_details > 0:
-            print(f'\n📋 各点位详细对比（显示前{show_details}个）:')
+            print(f'\n📋 Detailed comparison by point (showing the first {show_details}):')
             df_display = df_metrics.head(show_details).copy()
-            for col in ['CV原始(%)', 'CV校正(%)', 'CV变化(%)']:
+            for col in ['CV original (%)', 'CV corrected (%)', 'CV change (%)']:
                 df_display[col] = df_display[col].apply(lambda x: f'{x:.2f}')
-            for col in ['NDHDNTL原始', 'NDHDNTL校正', 'NDHDNTL变化']:
+            for col in ['NDHDNTL original', 'NDHDNTL corrected', 'NDHDNTL change']:
                 df_display[col] = df_display[col].apply(lambda x: f'{x:.4f}')
             try:
                 from IPython.display import display
@@ -998,67 +999,67 @@ def display_comparison_results(results: dict, name: str, show_details: int = 10)
 
 def plot_comparison_boxplot(results: dict, name: str):
     """
-    绘制归一化前后对比的箱线图。
-    
-    参数:
-        results: run_angle_normalization 返回的结果字典
-        name: 数据集名称
+    Draw boxplots comparing metrics before and after normalization.
+
+    Parameters:
+        results: result dictionary returned by run_angle_normalization
+        name: dataset name
     """
     import pandas as pd
     
     metrics = results.get('metrics', {})
     if not metrics:
-        print('[warn] 无指标数据，无法绘制对比图')
+        print('[warn] No metric data available; cannot draw comparison plots')
         return
     
-    # 构建 DataFrame
+    # Build the DataFrame
     metrics_list = []
     for point_id, m in metrics.items():
         metrics_list.append({
-            'CV原始(%)': m['ori_cv'],
-            'CV校正(%)': m['fit_cv'],
-            'NDHDNTL原始': m['ori_ndhdntl'],
-            'NDHDNTL校正': m['fit_ndhdntl']
+            'CV original (%)': m['ori_cv'],
+            'CV corrected (%)': m['fit_cv'],
+            'NDHDNTL original': m['ori_ndhdntl'],
+            'NDHDNTL corrected': m['fit_ndhdntl']
         })
     df_metrics = pd.DataFrame(metrics_list)
     
-    # 绘图
+    # Plotting
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
     
-    # CV 对比箱线图
-    cv_data = [df_metrics['CV原始(%)'].values, df_metrics['CV校正(%)'].values]
-    bp1 = axes[0].boxplot(cv_data, labels=['原始', '校正后'], patch_artist=True)
+    # CV comparison boxplot
+    cv_data = [df_metrics['CV original (%)'].values, df_metrics['CV corrected (%)'].values]
+    bp1 = axes[0].boxplot(cv_data, labels=['Original', 'Corrected'], patch_artist=True)
     bp1['boxes'][0].set_facecolor('#FF6B6B')
     bp1['boxes'][1].set_facecolor('#4ECDC4')
     axes[0].set_ylabel('CV (%)')
-    axes[0].set_title('变异系数(CV)对比')
+    axes[0].set_title('Coefficient of Variation (CV) comparison')
     axes[0].grid(True, alpha=0.3)
     
-    # NDHDNTL 对比箱线图
-    ndh_data = [df_metrics['NDHDNTL原始'].values, df_metrics['NDHDNTL校正'].values]
-    bp2 = axes[1].boxplot(ndh_data, labels=['原始', '校正后'], patch_artist=True)
+    # NDHDNTL comparison boxplot
+    ndh_data = [df_metrics['NDHDNTL original'].values, df_metrics['NDHDNTL corrected'].values]
+    bp2 = axes[1].boxplot(ndh_data, labels=['Original', 'Corrected'], patch_artist=True)
     bp2['boxes'][0].set_facecolor('#FF6B6B')
     bp2['boxes'][1].set_facecolor('#4ECDC4')
     axes[1].set_ylabel('NDHDNTL')
-    axes[1].set_title('动态范围指数(NDHDNTL)对比')
+    axes[1].set_title('Dynamic range index (NDHDNTL) comparison')
     axes[1].grid(True, alpha=0.3)
     
-    plt.suptitle(f'{name} 角度归一化前后对比', fontsize=14, fontweight='bold')
+    plt.suptitle(f'{name} comparison before and after angle normalization', fontsize=14, fontweight='bold')
     plt.tight_layout()
     plt.show()
 
 
 def plot_r2_distribution(results: dict, name: str):
     """
-    绘制 R² 分布直方图对比。
-    
-    参数:
-        results: run_angle_normalization 返回的结果字典
-        name: 数据集名称
+    Draw histogram comparisons of the R² distribution.
+
+    Parameters:
+        results: result dictionary returned by run_angle_normalization
+        name: dataset name
     """
     r2_details = results.get('r2_details', [])
     if not r2_details:
-        print('[warn] 无 R² 详细数据，无法绘制分布图')
+        print('[warn] No detailed R² data available; cannot draw distribution plots')
         return
     
     r2_before = [item['r2_polyfit'] for item in r2_details if not np.isnan(item['r2_polyfit'])]
@@ -1066,33 +1067,33 @@ def plot_r2_distribution(results: dict, name: str):
     
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
     
-    # 处理前 R² 分布
+    # R² distribution before processing
     axes[0].hist(r2_before, bins=30, color='#FF6B6B', alpha=0.7, edgecolor='white')
     axes[0].axvline(np.mean(r2_before), color='red', linestyle='--', 
-                    label=f'均值: {np.mean(r2_before):.4f}')
+                    label=f'Mean: {np.mean(r2_before):.4f}')
     axes[0].set_xlabel('R2')
-    axes[0].set_ylabel('频数')
-    axes[0].set_title('处理前 R2 分布')
+    axes[0].set_ylabel('Frequency')
+    axes[0].set_title('R2 distribution before processing')
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
     
-    # 处理后 R² 分布
+    # R² distribution after processing
     axes[1].hist(r2_after, bins=30, color='#4ECDC4', alpha=0.7, edgecolor='white')
     axes[1].axvline(np.mean(r2_after), color='teal', linestyle='--', 
-                    label=f'均值: {np.mean(r2_after):.4f}')
+                    label=f'Mean: {np.mean(r2_after):.4f}')
     axes[1].set_xlabel('R2')
-    axes[1].set_ylabel('频数')
-    axes[1].set_title('处理后 R2 分布')
+    axes[1].set_ylabel('Frequency')
+    axes[1].set_title('R2 distribution after processing')
     axes[1].legend()
     axes[1].grid(True, alpha=0.3)
     
-    plt.suptitle(f'{name} R2分布对比（R2越低表示天顶角影响越小）', fontsize=14, fontweight='bold')
+    plt.suptitle(f'{name} R2 distribution comparison (lower R2 indicates weaker zenith-angle impact)', fontsize=14, fontweight='bold')
     plt.tight_layout()
     plt.show()
 
 
 # =============================================================================
-# 便捷接口
+# Convenience interface
 # =============================================================================
 
 def run_angle_normalization(input_file: str, output_dir: str, name: str,
@@ -1104,44 +1105,44 @@ def run_angle_normalization(input_file: str, output_dir: str, name: str,
                             prefilter_ntl_upper_bound: float = None,
                             min_records_after_filter: int = 10):
     """
-    一键运行角度归一化流程。
-    
-    参数:
-        input_file: 输入时间序列文件路径
-        output_dir: 输出目录
-        name: 数据集名称（用于输出文件命名）
-        plot_scatter: 是否绘制散点图
-        plot_series: 是否绘制时间序列图
-        verbose: 是否打印详细信息
-        show_progress: 是否显示 tqdm 进度条
-        parallel: 是否使用多进程并行处理（默认 False）
-        n_workers: 并行进程数，默认为 CPU 核心数-1
-        prefilter_3sigma: 是否在归一化前执行 3-sigma 异常值过滤
-        prefilter_sigma: 3-sigma 过滤阈值（默认 3.0）
-        prefilter_ntl_upper_bound: 可选 NTL 硬阈值上限（如 1000）
-        min_records_after_filter: 过滤后保留点位所需的最少记录数
-    
-    返回:
-        results: 包含输出路径和评价指标的字典
+    Run the full angle-normalization workflow in one call.
+
+    Parameters:
+        input_file: input time-series file path
+        output_dir: output directory
+        name: dataset name used for output file naming
+        plot_scatter: whether to draw scatter plots
+        plot_series: whether to draw time-series plots
+        verbose: whether to print verbose logs
+        show_progress: whether to show a tqdm progress bar
+        parallel: whether to use multiprocessing (default False)
+        n_workers: number of worker processes, defaulting to CPU cores minus one
+        prefilter_3sigma: whether to run 3-sigma outlier filtering before normalization
+        prefilter_sigma: sigma threshold for 3-sigma filtering (default 3.0)
+        prefilter_ntl_upper_bound: optional hard upper bound for NTL values (for example 1000)
+        min_records_after_filter: minimum records required to keep a point after filtering
+
+    Returns:
+        results: dictionary containing output paths and evaluation metrics
     """
     import os
     import time
     
-    # 确保输出目录存在
+    # Ensure the output directory exists
     os.makedirs(output_dir, exist_ok=True)
     
-    # 定义输出路径
+    # Define output paths
     fit_result_path = os.path.join(output_dir, f'{name}_angle.txt')
     output_r2_path = os.path.join(output_dir, f'{name}_visFitResult.txt')
     output_params_path = os.path.join(output_dir, f'{name}_fitParams.txt')
     
-    # 读取数据
+    # Read input data
     if verbose:
-        print(f'读取数据: {input_file}')
+        print(f'Reading data: {input_file}')
     pointNumLngLatMap, pointsDic, keyList = readFile(input_file)
     
     if not pointsDic:
-        raise ValueError(f'未找到有效数据点（记录数>=10）: {input_file}')
+        raise ValueError(f'No valid data points found (records >= 10): {input_file}')
 
     prefilter_summary = {
         'enabled': False,
@@ -1162,20 +1163,20 @@ def run_angle_normalization(input_file: str, output_dir: str, name: str,
             verbose=verbose
         )
         if not pointsDic:
-            raise ValueError('3-sigma 过滤后无可用点位，请放宽阈值或关闭过滤')
+            raise ValueError('No usable points remain after 3-sigma filtering; relax the threshold or disable filtering')
     
     if verbose:
-        print(f'有效点位数: {len(pointsDic)}')
+        print(f'Valid points: {len(pointsDic)}')
         if parallel:
             cpu_count = multiprocessing.cpu_count()
             actual_workers = n_workers if n_workers else max(1, cpu_count - 1)
-            print(f'使用并行处理: {actual_workers} 进程 (CPU核心数: {cpu_count})')
+            print(f'Using parallel processing: {actual_workers} workers (CPU cores: {cpu_count})')
     
     start_time = time.time()
     stats_collector = []
     
     if parallel:
-        # 并行处理
+        # Parallel processing
         stats_collector = visScatterAndFitCurve_parallel(
             pointsDic, output_r2_path, fit_result_path,
             pointNumLngLatMap, output_params_path,
@@ -1183,7 +1184,7 @@ def run_angle_normalization(input_file: str, output_dir: str, name: str,
             verbose=verbose
         )
     else:
-        # 串行处理（原始方式）
+        # Serial processing (original behavior)
         progress = None
         try:
             if show_progress:
@@ -1192,7 +1193,7 @@ def run_angle_normalization(input_file: str, output_dir: str, name: str,
                     progress = tqdm(total=len(pointsDic), desc='AngleNorm', ncols=100)
                 except Exception as exc:
                     if verbose:
-                        print(f'[warn] 无法初始化进度条: {exc}')
+                        print(f'[warn] Failed to initialize progress bar: {exc}')
                     progress = None
 
             visScatterAndFitCurve(
@@ -1207,9 +1208,9 @@ def run_angle_normalization(input_file: str, output_dir: str, name: str,
     
     elapsed_time = time.time() - start_time
     if verbose:
-        print(f'处理耗时: {elapsed_time:.2f} 秒')
+        print(f'Elapsed time: {elapsed_time:.2f} s')
     
-    # 读取校正结果并计算指标
+    # Read corrected results and compute metrics
     pointNumLngLatMap_fit, pointsDic_fit, _ = readFile(fit_result_path)
     metrics = visTimeSeries(pointsDic, pointsDic_fit, name,
                            plot_series=plot_series, verbose=verbose)
@@ -1233,18 +1234,18 @@ def run_angle_normalization(input_file: str, output_dir: str, name: str,
 
     if verbose:
         if r2_summary_before:
-            print('[info] R2（处理前）: ' + ', '.join([
-                f'均值={r2_summary_before["mean"]:.4f}',
-                f'中位数={r2_summary_before["median"]:.4f}',
+            print('[info] R2 (before): ' + ', '.join([
+                f'mean={r2_summary_before["mean"]:.4f}',
+                f'median={r2_summary_before["median"]:.4f}',
                 f'IQR=({r2_summary_before["p25"]:.4f}, {r2_summary_before["p75"]:.4f})',
-                f'范围=({r2_summary_before["min"]:.4f}, {r2_summary_before["max"]:.4f})'
+                f'range=({r2_summary_before["min"]:.4f}, {r2_summary_before["max"]:.4f})'
             ]))
         if r2_summary_after:
-            print('[info] R2（处理后）: ' + ', '.join([
-                f'均值={r2_summary_after["mean"]:.4f}',
-                f'中位数={r2_summary_after["median"]:.4f}',
+            print('[info] R2 (after): ' + ', '.join([
+                f'mean={r2_summary_after["mean"]:.4f}',
+                f'median={r2_summary_after["median"]:.4f}',
                 f'IQR=({r2_summary_after["p25"]:.4f}, {r2_summary_after["p75"]:.4f})',
-                f'范围=({r2_summary_after["min"]:.4f}, {r2_summary_after["max"]:.4f})'
+                f'range=({r2_summary_after["min"]:.4f}, {r2_summary_after["max"]:.4f})'
             ]))
     
     return {
@@ -1264,13 +1265,13 @@ def run_angle_normalization(input_file: str, output_dir: str, name: str,
 
 
 # =============================================================================
-# 主程序入口
+# Main entry point
 # =============================================================================
 
 if __name__ == '__main__':
     import os
     
-    # 示例配置
+    # Example configuration
     PLOT_SCATTER = False
     PLOT_SERIES = False
     
@@ -1283,7 +1284,7 @@ if __name__ == '__main__':
         input_file = os.path.join(input_dir, f'{name}.txt')
         
         if not os.path.exists(input_file):
-            print(f'文件不存在, 请检查: {input_file}')
+            print(f'File does not exist, please check: {input_file}')
             continue
         
         try:
@@ -1294,10 +1295,10 @@ if __name__ == '__main__':
                 plot_scatter=PLOT_SCATTER,
                 plot_series=PLOT_SERIES
             )
-            print(f'\n处理完成: {name}')
-            print(f'  校正结果: {results["fit_result_path"]}')
-            print(f'  有效点位: {results["num_points"]}')
+            print(f'\nProcessing completed: {name}')
+            print(f'  Corrected output: {results["fit_result_path"]}')
+            print(f'  Valid points: {results["num_points"]}')
         except Exception as e:
-            print(f'处理失败: {name} -> {e}')
+            print(f'Processing failed: {name} -> {e}')
     
-    print('\n全部处理完成。')
+    print('\nAll processing completed.')

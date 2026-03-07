@@ -1,4 +1,4 @@
-"""时间序列分析与可视化工具。"""
+"""Time-series analysis and visualization utilities."""
 
 import datetime as dtime
 from typing import Dict, List, Tuple
@@ -10,12 +10,12 @@ import numpy as np
 
 def _read_point_timeseries(file_path: str) -> Dict[str, List[Tuple[str, float, float]]]:
 	"""
-	读取预处理/归一化输出文本。
+	Read preprocessing or normalization output text.
 
-	文件格式:
+	File format:
 		pointNum:lng,lat(left top):YYYYMMDD,Zenith,NTLValue;...
 
-	返回:
+	Returns:
 		{point_id: [(date_str, zenith, ntl), ...]}
 	"""
 	points: Dict[str, List[Tuple[str, float, float]]] = {}
@@ -52,7 +52,7 @@ def _read_point_timeseries(file_path: str) -> Dict[str, List[Tuple[str, float, f
 
 
 def _daily_mean_ntl(points: Dict[str, List[Tuple[str, float, float]]]) -> Dict[str, float]:
-	"""按日期聚合所有像元 NTL，计算每日均值。"""
+	"""Aggregate all pixel NTL values by date and compute the daily mean."""
 	date_values: Dict[str, List[float]] = {}
 
 	for records in points.values():
@@ -65,46 +65,46 @@ def _daily_mean_ntl(points: Dict[str, List[Tuple[str, float, float]]]) -> Dict[s
 def plot_mean_ntl_before_after(
 	original_file: str,
 	normalized_file: str,
-	title: str = "夜光均值时序（归一化前后）",
+	title: str = "Mean Nighttime Light Time Series (Before vs After Normalization)",
 	figsize: Tuple[int, int] = (12, 5),
 ) -> dict:
 	"""
-	绘制归一化前后夜光均值时序图。
+	Plot the mean nighttime light time series before and after normalization.
 
-	参数:
-		original_file: 归一化前时序文件路径
-		normalized_file: 归一化后时序文件路径
-		title: 图标题
-		figsize: 图尺寸
+	Parameters:
+		original_file: Path to the pre-normalization time-series file
+		normalized_file: Path to the post-normalization time-series file
+		title: Plot title
+		figsize: Figure size
 
-	返回:
-		dict: 包含对齐日期、前后均值序列与变化统计
+	Returns:
+		dict: Aligned dates, mean series before/after normalization, and summary statistics
 	"""
 	ori_points = _read_point_timeseries(original_file)
 	fit_points = _read_point_timeseries(normalized_file)
 
 	if not ori_points:
-		raise ValueError(f"原始文件无可用数据: {original_file}")
+		raise ValueError(f"No valid data found in original file: {original_file}")
 	if not fit_points:
-		raise ValueError(f"归一化文件无可用数据: {normalized_file}")
+		raise ValueError(f"No valid data found in normalized file: {normalized_file}")
 
 	ori_daily = _daily_mean_ntl(ori_points)
 	fit_daily = _daily_mean_ntl(fit_points)
 
 	common_dates = sorted(set(ori_daily.keys()) & set(fit_daily.keys()))
 	if not common_dates:
-		raise ValueError("原始与归一化数据无重叠日期，无法对比")
+		raise ValueError("The original and normalized datasets do not share any overlapping dates")
 
 	x_dt = [dtime.datetime.strptime(d, "%Y%m%d") for d in common_dates]
 	y_ori = np.array([ori_daily[d] for d in common_dates], dtype="float64")
 	y_fit = np.array([fit_daily[d] for d in common_dates], dtype="float64")
 
 	plt.figure(figsize=figsize)
-	plt.plot(x_dt, y_ori, color="#e4572e", linewidth=2.0, label="归一化前均值")
-	plt.plot(x_dt, y_fit, color="#2e86ab", linewidth=2.0, label="归一化后均值")
+	plt.plot(x_dt, y_ori, color="#e4572e", linewidth=2.0, label="Mean before normalization")
+	plt.plot(x_dt, y_fit, color="#2e86ab", linewidth=2.0, label="Mean after normalization")
 	plt.title(title)
-	plt.xlabel("日期")
-	plt.ylabel("夜光均值")
+	plt.xlabel("Date")
+	plt.ylabel("Mean nighttime light")
 	plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
 	plt.gca().xaxis.set_major_locator(mdates.AutoDateLocator())
 	plt.grid(True, alpha=0.25)

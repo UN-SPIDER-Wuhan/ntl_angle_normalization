@@ -10,7 +10,7 @@ from .angle_normalization import (
     run_angle_normalization
 )
 
-# preprocessing 模块可选导入（如果存在）
+# Optional preprocessing imports, if available.
 try:
     from .preprocessing import (
         stage1_extract_and_pair,
@@ -26,10 +26,10 @@ except ImportError:
     _preprocessing_available = False
 
 __all__ = [
-    # Prophet 相关
+    # Prophet-related exports
     "run_prophet_pipeline",
     "txt_to_daily_geotiffs",
-    # 角度归一化相关
+    # Angle normalization exports
     "readFile",
     "calGoodnessOfFit",
     "calCorrelation", 
@@ -39,7 +39,7 @@ __all__ = [
     "run_angle_normalization",
 ]
 
-# 如果 preprocessing 模块可用，添加到 __all__
+# Add preprocessing symbols to __all__ when the module is available.
 if _preprocessing_available:
     __all__.extend([
         "stage1_extract_and_pair",
