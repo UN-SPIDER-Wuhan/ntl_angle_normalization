@@ -1,5 +1,7 @@
 # NTL Prophet
 
+Published paper: https://doi.org/10.1016/j.jag.2023.103359
+
 NTL Prophet is a VIIRS nighttime light time-series processing project that covers the full workflow from raw data preprocessing to angle normalization, Prophet-based fitting and gap filling, and conversion of text outputs back into daily GeoTIFF images.
 
 This repository is suitable for the following use cases:
