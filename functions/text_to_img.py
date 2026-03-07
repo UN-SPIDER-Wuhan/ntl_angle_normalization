@@ -58,14 +58,14 @@ def txt_to_daily_geotiffs(
     nodata_value: float = -9999.0,
     date_formats: Optional[Iterable[str]] = None,
 ) -> List[str]:
-        """Convert point-based time-series text into daily GeoTIFF files.
+    """Convert point-based time-series text into daily GeoTIFF files.
 
-        Parameters:
-        - template_tif: Path to a template raster. When provided, spatial metadata,
-            resolution, width, and height are inherited automatically.
-        - template-free mode: Requires width, height, transform, and crs.
-        - supported txt format: pointN:lng,lat:YYYYMMDD,Zenith,NTL;...
-        """
+    Parameters:
+    - template_tif: Path to a template raster. When provided, spatial metadata,
+      resolution, width, and height are inherited automatically.
+    - template-free mode: Requires width, height, transform, and crs.
+    - supported txt format: pointN:lng,lat:YYYYMMDD,Zenith,NTL;...
+    """
     accepted_formats = tuple(date_formats) if date_formats else ("%Y%m%d", "%Y-%m-%d")
     start_dt = _as_datetime(start_date, accepted_formats)
     end_dt = _as_datetime(end_date, accepted_formats)
