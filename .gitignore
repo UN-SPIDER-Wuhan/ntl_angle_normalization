@@ -1,0 +1,46 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# VS Code
+.vscode/
+
+# OS / logs
+*.log
+*.tmp
+*.temp
+Thumbs.db
+Desktop.ini
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Generated data and outputs
+output/
+processed/
+exam_output/
+*.tif
+*.tiff
+*.vrt
+*.aux.xml
+
+# Local datasets
+# 如果你希望保留示例数据到仓库，可按需删除下面两行
+datasets/VNP46A1/
+datasets/VNP46A2/
