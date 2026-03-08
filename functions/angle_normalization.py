@@ -1115,8 +1115,10 @@ def run_angle_normalization(input_file: str, output_dir: str, name: str,
         plot_series: whether to draw time-series plots
         verbose: whether to print verbose logs
         show_progress: whether to show a tqdm progress bar
-        parallel: whether to use multiprocessing (default False)
-        n_workers: number of worker processes, defaulting to CPU cores minus one
+        parallel: kept for backward compatibility; the implementation now always
+            uses the unified worker-based execution path
+        n_workers: number of worker processes, defaulting to CPU cores minus one.
+            When parallel is False, the unified worker path runs with one worker.
         prefilter_3sigma: whether to run 3-sigma outlier filtering before normalization
         prefilter_sigma: sigma threshold for 3-sigma filtering (default 3.0)
         prefilter_ntl_upper_bound: optional hard upper bound for NTL values (for example 1000)
@@ -1165,46 +1167,29 @@ def run_angle_normalization(input_file: str, output_dir: str, name: str,
         if not pointsDic:
             raise ValueError('No usable points remain after 3-sigma filtering; relax the threshold or disable filtering')
     
+    cpu_count = multiprocessing.cpu_count()
+    if parallel:
+        actual_workers = n_workers if n_workers else max(1, cpu_count - 1)
+    else:
+        actual_workers = 1
+
     if verbose:
         print(f'Valid points: {len(pointsDic)}')
-        if parallel:
-            cpu_count = multiprocessing.cpu_count()
-            actual_workers = n_workers if n_workers else max(1, cpu_count - 1)
-            print(f'Using parallel processing: {actual_workers} workers (CPU cores: {cpu_count})')
+        if not parallel:
+            print('[info] Serial normalization path has been removed; using the unified worker path with 1 worker')
+        print(f'Using worker-based processing: {actual_workers} workers (CPU cores: {cpu_count})')
+        if plot_scatter:
+            print('[warn] plot_scatter is ignored in the unified worker path')
     
     start_time = time.time()
     stats_collector = []
     
-    if parallel:
-        # Parallel processing
-        stats_collector = visScatterAndFitCurve_parallel(
-            pointsDic, output_r2_path, fit_result_path,
-            pointNumLngLatMap, output_params_path,
-            n_workers=n_workers, show_progress=show_progress,
-            verbose=verbose
-        )
-    else:
-        # Serial processing (original behavior)
-        progress = None
-        try:
-            if show_progress:
-                try:
-                    from tqdm import tqdm
-                    progress = tqdm(total=len(pointsDic), desc='AngleNorm', ncols=100)
-                except Exception as exc:
-                    if verbose:
-                        print(f'[warn] Failed to initialize progress bar: {exc}')
-                    progress = None
-
-            visScatterAndFitCurve(
-                pointsDic, output_r2_path, fit_result_path,
-                pointNumLngLatMap, output_params_path,
-                plot_scatter=plot_scatter, verbose=verbose,
-                progress=progress, stats_collector=stats_collector
-            )
-        finally:
-            if progress is not None:
-                progress.close()
+    stats_collector = visScatterAndFitCurve_parallel(
+        pointsDic, output_r2_path, fit_result_path,
+        pointNumLngLatMap, output_params_path,
+        n_workers=actual_workers, show_progress=show_progress,
+        verbose=verbose
+    )
     
     elapsed_time = time.time() - start_time
     if verbose:

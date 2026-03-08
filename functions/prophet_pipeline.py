@@ -38,6 +38,37 @@ import csv
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import os
 
+
+def _patch_cmdstanpy_windows_encoding() -> None:
+    """Patch cmdstanpy subprocess decoding on Windows locales.
+
+    CmdStan output may be emitted in the local code page on some Windows
+    systems, while cmdstanpy reads it as text. This patch forces a tolerant
+    local decoding to prevent UnicodeDecodeError during Prophet fitting.
+    """
+    if os.name != "nt":
+        return
+    try:
+        import cmdstanpy.model as _cmdstan_model  # type: ignore
+
+        original_popen = _cmdstan_model.subprocess.Popen
+
+        if getattr(original_popen, "__name__", "") == "_copilot_windows_popen":
+            return
+
+        def _copilot_windows_popen(*args, **kwargs):
+            if kwargs.get("universal_newlines") or kwargs.get("text"):
+                kwargs.setdefault("encoding", "gbk")
+                kwargs.setdefault("errors", "replace")
+            return original_popen(*args, **kwargs)
+
+        _cmdstan_model.subprocess.Popen = _copilot_windows_popen
+    except Exception:
+        pass
+
+
+_patch_cmdstanpy_windows_encoding()
+
 # tqdm progress bar fallback (use a no-op implementation if unavailable)
 try:
     from tqdm import tqdm  # type: ignore
@@ -332,26 +363,23 @@ def writeDatafillingResult(
     point_lng_lat: str,
     include_coords: bool = False,
 ) -> List[float]:
-    if include_coords:
-        f.write(key_words + ":" + str(point_lng_lat) + ":")
-    else:
-        f.write(key_words + ":")
+    f.write(key_words + ":" + str(point_lng_lat) + ":")
     temp_arr: List[float] = []
     for k in range(rows):
         date_str = str(forecast.loc[k, 'ds']).split(" ")[0]
         if k == 0:
             if (df.loc[k, 'y'] is None):
-                f.write(date_str + "," + str(forecast.loc[k, 'yhat']))
+                f.write(date_str + ",0.0," + str(forecast.loc[k, 'yhat']))
                 temp_arr.append(forecast.loc[k, 'yhat'])
             else:
-                f.write(date_str + "," + str(df.loc[k, 'y']))
+                f.write(date_str + ",0.0," + str(df.loc[k, 'y']))
                 temp_arr.append(df.loc[k, 'y'])
         else:
             if (df.loc[k, 'y'] is None):
-                f.write(";" + date_str + "," + str(forecast.loc[k, 'yhat']))
+                f.write(";" + date_str + ",0.0," + str(forecast.loc[k, 'yhat']))
                 temp_arr.append(forecast.loc[k, 'yhat'])
             else:
-                f.write(";" + date_str + "," + str(df.loc[k, 'y']))
+                f.write(";" + date_str + ",0.0," + str(df.loc[k, 'y']))
                 temp_arr.append(df.loc[k, 'y'])
     f.write("\n")
     return temp_arr
@@ -367,27 +395,24 @@ def formatDatafillingResult(
 ) -> Tuple[str, List[float]]:
     """Return the same output format as writeDatafillingResult, but as a string for parallel collection and ordered writing."""
     parts: List[str] = []
-    if include_coords:
-        header = f"{key_words}:{point_lng_lat}:"
-    else:
-        header = f"{key_words}:"
+    header = f"{key_words}:{point_lng_lat}:"
     parts.append(header)
     temp_arr: List[float] = []
     for k in range(rows):
         date_str = str(forecast.loc[k, 'ds']).split(" ")[0]
         if k == 0:
             if (df.loc[k, 'y'] is None):
-                parts.append(f"{date_str},{forecast.loc[k, 'yhat']}")
+                parts.append(f"{date_str},0.0,{forecast.loc[k, 'yhat']}")
                 temp_arr.append(forecast.loc[k, 'yhat'])
             else:
-                parts.append(f"{date_str},{df.loc[k, 'y']}")
+                parts.append(f"{date_str},0.0,{df.loc[k, 'y']}")
                 temp_arr.append(df.loc[k, 'y'])
         else:
             if (df.loc[k, 'y'] is None):
-                parts.append(f";{date_str},{forecast.loc[k, 'yhat']}")
+                parts.append(f";{date_str},0.0,{forecast.loc[k, 'yhat']}")
                 temp_arr.append(forecast.loc[k, 'yhat'])
             else:
-                parts.append(f";{date_str},{df.loc[k, 'y']}")
+                parts.append(f";{date_str},0.0,{df.loc[k, 'y']}")
                 temp_arr.append(df.loc[k, 'y'])
     line = "".join(parts) + "\n"
     return line, temp_arr
@@ -619,7 +644,7 @@ def run_prophet_pipeline(
         "enable_pso_plot": False,
         "enable_forecast_plot": False,
         "enable_simple_series_plot": False,
-        "output_include_coords": False,
+        "output_include_coords": True,
         "progress_bar": True,
         "quiet": True,
         "parallel_points": False,

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Iterable, List, Optional, Sequence, Tuple, Union
 import os
+import re
 
 import numpy as np
 import rasterio
@@ -24,24 +25,39 @@ def _as_datetime(value: DateLike, accepted_formats: Sequence[str]) -> datetime:
 
 
 def _parse_text_entries(txt_path: str) -> List[Tuple[int, str]]:
-    with open(txt_path, "r", encoding="utf-8") as f:
-        raw = f.read().strip()
-
-    raw = raw.replace("pointNum:lng,lat(lefttop):YYYY-MM-DD,Zenith,NTLValue;...", "")
-
-    chunks = raw.split("point")
     entries: List[Tuple[int, str]] = []
-    for chunk in chunks:
-        chunk = chunk.strip()
-        if not chunk or ":" not in chunk:
-            continue
-        idx_text = chunk.split(":", 1)[0].strip()
-        if not idx_text.isdigit():
-            continue
-        entries.append((int(idx_text), chunk))
+    with open(txt_path, "r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or ":" not in line:
+                continue
+            if line.lower().startswith("pointnum:"):
+                continue
+
+            head = line.split(":", 1)[0].strip()
+            match = re.search(r"(\d+)$", head)
+            if not match:
+                continue
+
+            entries.append((int(match.group(1)), line))
 
     entries.sort(key=lambda x: x[0])
     return entries
+
+
+def _extract_payload(content: str) -> str:
+    parts = content.split(":")
+    if len(parts) >= 3:
+        return parts[2]
+    if len(parts) == 2:
+        return parts[1]
+    return ""
+
+
+def _extract_value(fields: Sequence[str]) -> float:
+    if len(fields) < 2:
+        raise ValueError("Each record must contain at least date and value")
+    return float(fields[-1])
 
 
 def txt_to_daily_geotiffs(
@@ -64,7 +80,10 @@ def txt_to_daily_geotiffs(
     - template_tif: Path to a template raster. When provided, spatial metadata,
       resolution, width, and height are inherited automatically.
     - template-free mode: Requires width, height, transform, and crs.
-    - supported txt format: pointN:lng,lat:YYYYMMDD,Zenith,NTL;...
+        - supported txt format:
+            pointN:lng,lat:YYYYMMDD,Zenith,NTL;...
+            pointN:lng,lat:YYYY-MM-DD,0.0,NTL;...
+            pointN:YYYY-MM-DD,NTL;... (legacy output without coordinates)
     """
     accepted_formats = tuple(date_formats) if date_formats else ("%Y%m%d", "%Y-%m-%d")
     start_dt = _as_datetime(start_date, accepted_formats)
@@ -106,19 +125,18 @@ def txt_to_daily_geotiffs(
         for c in range(width):
             content = entry_by_id.get(pixel_id)
             if content:
-                parts = content.split(":")
-                if len(parts) >= 3:
-                    rows = parts[2].split(";")
-                    for row in rows:
-                        row = row.strip()
-                        if not row:
-                            continue
-                        fields = row.split(",")
-                        if len(fields) < 3:
-                            continue
-                        date_dt = _as_datetime(fields[0].strip(), accepted_formats)
-                        if start_dt <= date_dt <= end_dt:
-                            cube[r, c, (date_dt - start_dt).days] = float(fields[2])
+                payload = _extract_payload(content)
+                rows = payload.split(";") if payload else []
+                for row in rows:
+                    row = row.strip()
+                    if not row:
+                        continue
+                    fields = [field.strip() for field in row.split(",")]
+                    if len(fields) < 2:
+                        continue
+                    date_dt = _as_datetime(fields[0], accepted_formats)
+                    if start_dt <= date_dt <= end_dt:
+                        cube[r, c, (date_dt - start_dt).days] = _extract_value(fields)
             pixel_id += 1
             if pixel_id > total_pixels and r == height - 1 and c == width - 1:
                 break

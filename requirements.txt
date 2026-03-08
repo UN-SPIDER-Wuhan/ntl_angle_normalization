@@ -1,18 +1,19 @@
 # Core scientific stack
-numpy>=1.21,<3
-pandas>=1.3
-scipy>=1.8
-matplotlib>=3.4
+numpy>=2.0,<2.5
+pandas>=2.2,<3.1
+scipy>=1.13,<1.18
+matplotlib>=3.8,<3.11
 
 # Time-series modeling
-prophet>=1.1
+prophet>=1.3,<1.4
+cmdstanpy>=1.3,<2
 
 # Utilities
-tqdm>=4.64
+tqdm>=4.67,<5
 
 # Remote sensing / GIS
-rasterio>=1.3
-affine>=2.4
+rasterio>=1.4,<1.5
+affine>=2.4,<3
 GDAL>=3.4
 
 # Notebook runtime
