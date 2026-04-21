@@ -11,11 +11,43 @@ This repository is suitable for the following use cases:
 - Using Prophet to fit and fill missing or unstable observations
 - Reconstructing final text outputs into GeoTIFF files that can be loaded in GIS software
 
-## 1. Features
+# NTL Angle Normalization
+
+Published paper: https://doi.org/10.1016/j.jag.2023.103359
+
+NTL Angle Normalization is a VIIRS nighttime light time-series processing project that covers the full workflow from raw data preprocessing to angle normalization, Prophet-based fitting and gap filling, and conversion of text outputs back into daily GeoTIFF images.
+
+This repository is suitable for the following use cases:
+
+- Processing VNP46A1 and VNP46A2 nighttime light products
+- Performing quality control and angle normalization for pixel-level nighttime light time series
+- Using Prophet to fit and fill missing or unstable observations
+- Reconstructing final text outputs into GeoTIFF files that can be loaded in GIS software
+
+## 1. Data Acquisition
+
+This project requires NASA's Black Marble daily nighttime light products, specifically **VNP46A1** (Daily At-Sensor TOA Nighttime Lights) and **VNP46A2** (Daily Moonlight-adjusted Nighttime Lights). 
+
+You can obtain the raw HDF5 data through the following methods:
+
+### Option 1: Official NASA Portals (Manual Download)
+Suitable for small study areas or short time ranges.
+1. Register for an account at [NASA Earthdata](https://urs.earthdata.nasa.gov/).
+2. Access [LAADS DAAC](https://ladsweb.modaps.eosdis.nasa.gov/search/) or [Earthdata Search](https://search.earthdata.nasa.gov/).
+3. Search for the `VNP46A1` and `VNP46A2` collections.
+4. Specify your temporal range and spatial bounding box (or specific tiles), and download the HDF5 files to your local directory.
+
+### Option 2: Programmatic Pipeline (Recommended for Large-Scale Data)
+Daily nighttime light time-series analysis often involves TB-scale data. For large regions or multi-year analysis, manual downloading is highly inefficient. 
+1. Generate an App Key (Bearer Token) from your LAADS DAAC profile.
+2. Utilize an automated multi-threaded Python script to fetch the HDF5 tiles using the Earthdata API.
+3. *Architecture Tip:* When engineering a large-scale data pipeline for Black Marble products, it is highly recommended to split your workflow into dedicated modules (e.g., a **downloader** for fetching via API, an **indexer** for local metadata management, and a **builder/extractor** for constructing data cubes) to handle network instability and local storage efficiently before feeding the data into this normalization project.
+
+## 2. Features
 
 The project currently provides four core capabilities.
 
-### 1. Data Preprocessing
+### 2.1 Data Preprocessing
 
 - Extract key layers from VNP46A2 and VNP46A1 HDF5 files
 - Support study-area clipping with a shapefile
@@ -27,7 +59,7 @@ Entry points:
 - notebook: [1_preprocessing_data.ipynb](1_preprocessing_data.ipynb)
 - code: [functions/preprocessing.py](functions/preprocessing.py)
 
-### 2. Angle Normalization
+### 2.2 Angle Normalization
 
 - Read preprocessed pixel time-series text files
 - Perform sensor zenith angle normalization for each pixel
@@ -39,7 +71,7 @@ Entry points:
 - code: [functions/angle_normalization.py](functions/angle_normalization.py)
 - code: [functions/timeseries_analysis.py](functions/timeseries_analysis.py)
 
-### 3. Prophet Fitting and Gap Filling
+### 2.3 Prophet Fitting and Gap Filling
 
 - Fit Prophet models on normalized time series
 - Support PSO-based search for key Prophet parameters
@@ -50,7 +82,7 @@ Entry points:
 - notebook: [3_prophet_params_and_run.ipynb](3_prophet_params_and_run.ipynb)
 - code: [functions/prophet_pipeline.py](functions/prophet_pipeline.py)
 
-### 4. Text-to-Image Conversion
+### 2.4 Text-to-Image Conversion
 
 - Convert Prophet text outputs into daily GeoTIFF files
 - Support inheriting spatial metadata from a template raster
@@ -60,26 +92,6 @@ Entry point:
 
 - code: [functions/text_to_img.py](functions/text_to_img.py)
 
-## 2. Project Structure
-
-```text
-ntl_prophet/
-├── README.md
-├── LICENSE
-├── requirements.txt
-├── __init__.py
-├── 1_preprocessing_data.ipynb
-├── 2_angle normalization.ipynb
-├── 3_prophet_params_and_run.ipynb
-├── datasets/
-└── functions/
-    ├── __init__.py
-    ├── preprocessing.py
-    ├── angle_normalization.py
-    ├── prophet_pipeline.py
-    ├── text_to_img.py
-    └── timeseries_analysis.py
-```
 
 ## 3. Recommended Environment
 
